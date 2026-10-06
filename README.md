@@ -75,11 +75,14 @@ laboratory. `scripts/validate_strouhal.py` measures it in the simulator at Reyno
 | Channel height | Simulator | Experiment, open flow | Difference |
 | --- | --- | --- | --- |
 | 12 diameters | 0.1752 | 0.164 | +6.8 % |
+| 24 diameters | 0.1734 | 0.164 | +5.7 % |
 
-The simulator sheds slightly faster than a cylinder in open flow because its cylinder sits in a channel
-of finite height, which squeezes the flow past it. The simulations in the dataset use a narrower
-channel still (6 to 9 diameters), so their Strouhal numbers are higher again. The network is therefore
-compared with the simulator, not with open-flow experiments.
+The simulator sheds faster than a cylinder in open flow. Part of the reason is that its cylinder sits
+in a channel of finite height, which squeezes the flow past it: with twice the room the difference
+shrinks. That does not account for all of it; the rest is probably the coarse cylinder (30 cells
+across), which has not been checked. The simulations in the dataset use a narrower channel still (6 to
+9 diameters), so their Strouhal numbers are higher again. The network is therefore compared with the
+simulator, not with open-flow experiments.
 
 **The network against the simulator.** All the numbers below are for simulations the network never
 saw, with the network running on its own from the first snapshot (`scripts/evaluate.py`).
@@ -134,6 +137,7 @@ python scripts/validate_strouhal.py   # the simulator against experiment, 3 minu
 python scripts/generate_data.py       # the 44 simulations, 35 minutes, 1.7 GB in data/
 python scripts/train.py               # the network, 70 minutes, saved in runs/model.pt
 python scripts/evaluate.py            # every number, chart and animation above, in results/
+python scripts/long_run.py            # a run five times longer than the training examples, 5 minutes
 ```
 
 Times are for an RTX 3060.
@@ -144,6 +148,14 @@ Times are for an RTX 3060.
   the network keeps a realistic wake for 300 to 900 snapshots (9 to 23 shedding cycles, longest at low
   Reynolds numbers) and then the vortices die out and the flow goes smooth. It no longer blows up, but
   from there on it is wrong. This is the main target of version 2.
+
+  ![Simulation and network at five moments of a run of 1000 snapshots](docs/media/long_run_snapshots.png)
+
+  ![Sideways motion behind the obstacle over 1000 snapshots](docs/media/long_run_activity.png)
+
+  *Reynolds 160, a run of 1000 snapshots (`scripts/long_run.py`). The network follows the simulation
+  for about 450 snapshots, more than twice the length of anything it was trained on, and then loses the
+  wake within 100 more.*
 - **It drifts out of step.** After about 50 snapshots the predicted vortices are in the right place for
   the wrong instant. Rhythm and shape are right; the exact timing is not.
 - **It only knows this kind of flow.** One obstacle, two dimensions, Reynolds numbers of a few hundred,
@@ -172,6 +184,7 @@ Times are for an RTX 3060.
 | `scripts/generate_data.py` | Runs and saves the 44 simulations |
 | `scripts/train.py` | Trains the network |
 | `scripts/evaluate.py` | Measures the network against the simulator and draws the figures |
+| `scripts/long_run.py` | A run five times longer than the training examples |
 | `docs/media/` | The figures and animations of this README |
 
 ## References
