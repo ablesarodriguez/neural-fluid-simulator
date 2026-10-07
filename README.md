@@ -155,9 +155,13 @@ Version 1 was trained on 28 simulations of 200 snapshots, with a last stage that
 alone for at most 40 snapshots. It followed the simulation closely at first, but left running it lost
 the wake:
 
-![Version 1: the wake dies out](docs/media/long_run_activity_v1.png)
+![Simulation, version 1 and version 2 at five moments of a run of 1200 snapshots](docs/media/versions_snapshots.png)
 
-*Version 1 at Reynolds 160: the vortices die out after about 450 snapshots.*
+![Sideways motion behind the obstacle for the simulation and both versions](docs/media/versions_activity.png)
+
+*Reynolds 160, both networks predicting on their own from the same first frame
+(`scripts/compare_versions.py`). The vortices of version 1 break up between snapshots 500 and 650;
+version 2 keeps them to the end.*
 
 Version 2 changed three things: simulations three times longer and more of them (40 of 600 snapshots),
 the running predictions of training stage 4, and choosing the final network on separate validation
@@ -245,6 +249,7 @@ stopped and started again.
 | `scripts/train.py` | Trains the network |
 | `scripts/evaluate.py` | Measures the network against the simulator and draws the figures |
 | `scripts/long_run.py` | A run far longer than the training examples |
+| `scripts/compare_versions.py` | Two trained networks side by side on the same long run |
 | `docs/media/` | The figures and animations of this README |
 
 ## References
