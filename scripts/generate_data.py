@@ -3,13 +3,15 @@
 Every simulation is a fluid flowing past one obstacle. What changes between
 them is the Reynolds number and the obstacle. They are split into:
 
-  train         28 cylinders of random size and height, Reynolds 60 to 200
+  train         40 cylinders of random size and height, Reynolds 60 to 200
   test_similar  4 more of the same kind, never shown during training
+  validation    4 more again, used to watch the training and to choose the
+                final network, so that the tests stay untouched until the end
   test_sweep    one fixed cylinder at Reynolds 60, 80 ... 200 and, beyond
                 anything seen in training, 230 and 260
   test_square   a square obstacle, a shape never seen in training
 
-Each one is saved in data/<split>/<name>.pt as 200 snapshots of the velocity
+Each one is saved in data/<split>/<name>.pt as 600 snapshots of the velocity
 field, 100 simulation steps apart, at half the resolution of the simulation.
 
 Run from the project folder:  python scripts/generate_data.py
@@ -28,8 +30,8 @@ from flowsim.lbm import Flow, cylinder, square
 
 NX, NY, SPEED = 768, 256, 0.05     # simulation grid and inflow speed
 CENTRE_X = 170                     # every obstacle sits at this distance from the inflow
-SETTLE, FRAMES, EVERY = 20000, 200, 100  # steps discarded, snapshots kept, steps between snapshots
-BATCH = 11                         # simulations run at the same time
+SETTLE, FRAMES, EVERY = 40000, 600, 100  # steps discarded, snapshots kept, steps between snapshots
+BATCH = 12                         # simulations run at the same time
 
 
 def describe_all():
@@ -40,7 +42,7 @@ def describe_all():
         return low + (high - low) * torch.rand(1, generator=random).item()
 
     cases = []
-    for split, count in (("train", 28), ("test_similar", 4)):
+    for split, count in (("train", 40), ("test_similar", 4), ("validation", 4)):
         for n in range(count):
             cases.append(dict(split=split, name=f"{n:02d}", shape="cylinder", reynolds=uniform(60, 200),
                               half_size=uniform(14, 22), centre_y=NY / 2 + uniform(-30, 30)))
@@ -82,7 +84,8 @@ def run(cases, device):
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    cases = describe_all()
+    # Simulations already on disk are skipped, so an interrupted run can simply be started again.
+    cases = [c for c in describe_all() if not (ROOT / "data" / c["split"] / f"{c['name']}.pt").exists()]
     start = time.time()
     for first in range(0, len(cases), BATCH):
         run(cases[first : first + BATCH], device)

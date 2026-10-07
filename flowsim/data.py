@@ -1,10 +1,13 @@
 """Loading the simulations saved by scripts/generate_data.py."""
 
+import os
 from pathlib import Path
 
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
+# The simulations are read from data/, or from the folder named in FLOWSIM_DATA.
+DATA = ROOT / os.environ.get("FLOWSIM_DATA", "data")
 
 
 def load_split(split, device="cuda"):
@@ -14,7 +17,7 @@ def load_split(split, device="cuda"):
     solid     (nx, ny) fraction of each cell taken by the obstacle
     reynolds, diameter (in cells), shape, name
     """
-    folder = ROOT / "data" / split
+    folder = DATA / split
     files = sorted(folder.glob("*.pt"))
     if not files:
         raise FileNotFoundError(f"no simulations in {folder}; run scripts/generate_data.py first")

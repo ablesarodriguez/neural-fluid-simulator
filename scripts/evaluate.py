@@ -9,9 +9,14 @@ It answers four questions and writes the answers to results/:
   4. How much faster is it than the simulation?
 
 Run from the project folder:  python scripts/evaluate.py
+
+The network is read from runs/model.pt and the results go to results/. Both can be
+changed with the environment variables FLOWSIM_MODEL and FLOWSIM_RESULTS, which is
+how an older network is measured on the same test simulations.
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,6 +27,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +36,8 @@ from flowsim.data import load_split, relative_error
 from flowsim.lbm import Flow, cylinder, vorticity
 from flowsim.model import FlowNet, rollout
 
-RESULTS = ROOT / "results"
+RESULTS = ROOT / os.environ.get("FLOWSIM_RESULTS", "results")
+MODEL = ROOT / os.environ.get("FLOWSIM_MODEL", "runs/model.pt")
 BLUE, ORANGE, AQUA, GREY = "#2a78d6", "#eb6834", "#1baf7a", "#898781"
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e1e0d9", "#fcfcfb"
 CENTRE_X = 85  # position of every obstacle along the flow, in cells of the saved grid
@@ -42,6 +49,24 @@ def predict(model, case, steps):
         frames = rollout(model, case["velocity"][:1].float(), case["solid"][None],
                          torch.tensor([case["reynolds"]], device="cuda"), steps)
     return frames[0].float()
+
+
+def error_without_timing(predicted, true):
+    """The error of each predicted frame against the true frame that looks most like it.
+
+    The ordinary error compares both at the same instant, so a correct wake that
+    runs a little ahead or behind counts as wrong. This one lets each predicted
+    frame be matched with any moment of the simulation: what is left is how far
+    the prediction is from being a real flow at all.
+    """
+    coarse = lambda v: F.avg_pool2d(v, 8).flatten(1)
+    nearest = torch.cdist(coarse(predicted), coarse(true)).argmin(dim=1)
+    return relative_error(predicted, true[nearest])
+
+
+def at(curve, moments=(10, 50, 199, 599)):
+    """Values of an error curve, in percent, after some numbers of snapshots."""
+    return {f"after_{m}": float(100 * curve[m - 1]) for m in moments if m <= len(curve)}
 
 
 def strouhal(velocity, case):
@@ -106,7 +131,7 @@ def save_animation(true, predicted, solid, path, title, every=3):
 if __name__ == "__main__":
     RESULTS.mkdir(exist_ok=True)
     model = FlowNet().cuda()
-    model.load_state_dict(torch.load(ROOT / "runs" / "model.pt"))
+    model.load_state_dict(torch.load(MODEL))
     model.eval()
     summary = {}
 
@@ -116,15 +141,17 @@ if __name__ == "__main__":
         "Higher Reynolds than in training (230, 260)": [c for c in load_split("test_sweep") if c["reynolds"] > 200],
         "Square obstacle, a shape never seen": load_split("test_square"),
     }
-    curves, kept = {}, {}
+    curves, shapes, kept = {}, {}, {}
     for name, cases in groups.items():
-        errors = []
+        errors, untimed = [], []
         for case in cases:
             true = case["velocity"][1:].float()
             predicted = predict(model, case, true.shape[0])
             errors.append(relative_error(predicted, true).cpu().numpy())
+            untimed.append(error_without_timing(predicted, true).cpu().numpy())
             kept[(name, case["name"])] = (case, true, predicted)
         curves[name] = np.mean(errors, axis=0)
+        shapes[name] = np.mean(untimed, axis=0)
     # What you get with no model at all: assuming the flow stays as it was at the start.
     still = np.mean([relative_error(c["velocity"][:1].float().expand_as(c["velocity"][1:]), c["velocity"][1:].float()).cpu().numpy()
                      for c in groups["Unseen cylinders, Reynolds 60 to 200"]], axis=0)
@@ -140,8 +167,20 @@ if __name__ == "__main__":
     ax.legend(frameon=False, fontsize=9.5, labelcolor=MUTED, loc="upper left", bbox_to_anchor=(0.0, 1.16), ncol=2)
     fig.savefig(RESULTS / "rollout_error.png", bbox_inches="tight")
     plt.close(fig)
-    summary["error_percent"] = {name: {"after_10": float(100 * c[9]), "after_50": float(100 * c[49]), "after_199": float(100 * c[-1])} for name, c in curves.items()}
-    summary["error_percent"]["No model"] = {"after_10": float(100 * still[9]), "after_50": float(100 * still[49]), "after_199": float(100 * still[-1])}
+    summary["error_percent"] = {name: at(c) for name, c in curves.items()}
+    summary["error_percent"]["No model"] = at(still)
+
+    # The same with the timing taken out: each predicted frame against the most similar true one.
+    fig, ax = plt.subplots(figsize=(8, 4.6), dpi=160, facecolor=SURFACE)
+    for (name, curve), colour, dashes in zip(shapes.items(), (BLUE, ORANGE, AQUA), ("solid", (0, (6, 2)), (0, (1, 1.5)))):
+        ax.plot(snapshots, 100 * curve, color=colour, linewidth=2, linestyle=dashes, label=name)
+    style(ax, "snapshots predicted in a row by the network on its own", "error against the most similar true frame (%)")
+    ax.set_xlim(0, len(still))
+    ax.set_ylim(0, None)
+    ax.legend(frameon=False, fontsize=9.5, labelcolor=MUTED, loc="upper left", bbox_to_anchor=(0.0, 1.16), ncol=2)
+    fig.savefig(RESULTS / "error_without_timing.png", bbox_inches="tight")
+    plt.close(fig)
+    summary["error_without_timing_percent"] = {name: at(c) for name, c in shapes.items()}
 
     # ---- 2. Shedding rhythm against the Reynolds number ------------------------------
     sweep = sorted(load_split("test_sweep"), key=lambda c: c["reynolds"])
@@ -205,12 +244,12 @@ if __name__ == "__main__":
 
     # ---- Pictures ----------------------------------------------------------------------
     case, true, predicted = kept[("Unseen cylinders, Reynolds 60 to 200", "00")]
-    moments = (9, 49, 198)
+    moments = [m for m in (9, 49, 198, 598) if m < true.shape[0]]
     limit = 0.8 * np.nanmax(np.abs(spin(true[-1], case["solid"])[:, CENTRE_X + 12 :]))
     cmap = plt.get_cmap("berlin").copy()
     cmap.set_bad("#8a8f98")
-    fig, axes = plt.subplots(3, 3, figsize=(12, 4.3), dpi=160, facecolor="#101014")
-    fig.subplots_adjust(left=0.12, right=0.995, top=0.93, bottom=0.01, hspace=0.04, wspace=0.02)
+    fig, axes = plt.subplots(3, len(moments), figsize=(1.6 + 3.5 * len(moments), 4.3), dpi=160, facecolor="#101014")
+    fig.subplots_adjust(left=1.45 / (1.6 + 3.5 * len(moments)), right=0.995, top=0.93, bottom=0.01, hspace=0.04, wspace=0.02)
     for column, moment in enumerate(moments):
         rows = (spin(true[moment], case["solid"]), spin(predicted[moment], case["solid"]))
         for row, picture in enumerate(rows + (rows[1] - rows[0],)):
@@ -227,11 +266,11 @@ if __name__ == "__main__":
     fig.savefig(RESULTS / "snapshots.png", facecolor=fig.get_facecolor())
     plt.close(fig)
 
-    save_animation(true, predicted, case["solid"], RESULTS / "unseen_cylinder.gif", f"Unseen cylinder, Reynolds {case['reynolds']:.0f}")
+    save_animation(true, predicted, case["solid"], RESULTS / "unseen_cylinder.gif", f"Unseen cylinder, Reynolds {case['reynolds']:.0f}", every=5)
     case, true, predicted = kept[("Higher Reynolds than in training (230, 260)", "re260")]
-    save_animation(true, predicted, case["solid"], RESULTS / "higher_reynolds.gif", "Reynolds 260, above the training range (60 to 200)")
+    save_animation(true, predicted, case["solid"], RESULTS / "higher_reynolds.gif", "Reynolds 260, above the training range (60 to 200)", every=5)
     case, true, predicted = kept[("Square obstacle, a shape never seen", "re160")]
-    save_animation(true, predicted, case["solid"], RESULTS / "square.gif", "Square obstacle, a shape never seen in training")
+    save_animation(true, predicted, case["solid"], RESULTS / "square.gif", "Square obstacle, a shape never seen in training", every=5)
 
     (RESULTS / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))

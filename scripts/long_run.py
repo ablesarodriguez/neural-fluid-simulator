@@ -1,6 +1,6 @@
-"""Shows where the network stops working: a run five times longer than its training examples.
+"""Checks how long the network keeps going: a run far longer than its training examples.
 
-The simulation is run for 1000 snapshots (the training examples have 200) and
+The simulation is run for 1500 snapshots (the training examples have 600) and
 the network is left to predict all of them on its own from the first one. The
 result is an animation of both, pictures at a few moments, and a chart of how
 much the flow behind the obstacle is moving in each.
@@ -27,7 +27,7 @@ from flowsim.lbm import Flow, cylinder
 from flowsim.model import FlowNet
 
 REYNOLDS = float(sys.argv[1]) if len(sys.argv) > 1 else 160.0
-FRAMES = 1000
+FRAMES = 1500
 
 if __name__ == "__main__":
     # The same cylinder as in the Reynolds sweep of the test set, simulated for much longer.
@@ -52,8 +52,8 @@ if __name__ == "__main__":
     activity = lambda v: v[:, 1, wake].abs().mean(dim=(1, 2)).unfold(0, 25, 25).mean(dim=1).cpu().numpy()
     moments = 25 * np.arange(1, FRAMES // 25 + 1)
     fig, ax = plt.subplots(figsize=(8, 4.2), dpi=160, facecolor=SURFACE)
-    ax.axvspan(0, 200, color="#f0efec", zorder=0)
-    ax.text(100, 0.03, "length of the\ntraining examples", color="#898781", fontsize=9, ha="center", transform=ax.get_xaxis_transform())
+    ax.axvspan(0, 600, color="#f0efec", zorder=0)
+    ax.text(300, 0.03, "length of the training examples", color="#898781", fontsize=9, ha="center", transform=ax.get_xaxis_transform())
     ax.plot(moments, activity(true), color=BLUE, linewidth=2, label="Simulation")
     ax.plot(moments, activity(predicted), color=ORANGE, linewidth=2, linestyle=(0, (6, 2)), label="Neural network")
     style(ax, "snapshots predicted in a row by the network on its own", "sideways motion behind the obstacle\n(fraction of the inflow speed)")
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     plt.close(fig)
 
     # Pictures of both at a few moments.
-    shown = (100, 300, 500, 700, 1000)
+    shown = (100, 400, 700, 1000, 1500)
     limit = 0.8 * np.nanmax(np.abs(spin(true[-1], case["solid"])[:, CENTRE_X + 12 :]))
     cmap = plt.get_cmap("berlin").copy()
     cmap.set_bad("#8a8f98")
@@ -85,6 +85,6 @@ if __name__ == "__main__":
     fig.savefig(RESULTS / "long_run_snapshots.png", facecolor=fig.get_facecolor())
     plt.close(fig)
 
-    save_animation(true, predicted, case["solid"], RESULTS / "long_run.gif", f"Reynolds {REYNOLDS:.0f}, five times longer than the training examples", every=8)
+    save_animation(true, predicted, case["solid"], RESULTS / "long_run.gif", f"Reynolds {REYNOLDS:.0f}, 1500 snapshots, with training examples of 600", every=12)
     print("network activity by snapshot:", dict(zip(moments[3::4].tolist(), np.round(activity(predicted)[3::4], 3).tolist())))
     print("simulation activity:", round(float(activity(true).mean()), 3))
