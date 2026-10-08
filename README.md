@@ -184,6 +184,53 @@ version 2 gains is that it does not fall apart, which is what makes a model of t
 error figures of version 1 here are lower than those first published for it, because these test
 simulations start from flows that have had longer to settle.
 
+## Experiment: averaging the network
+
+The last training stages of version 2 are unsteady: measured every 250 steps on the validation flows,
+the error after 199 snapshots jumps between 31 % and 130 %. A standard remedy is to keep a running
+average of the network's weights over about the last thousand steps and to use that average instead
+of the network being trained (`python scripts/train.py --average`). It was trained with the same data,
+recipe and random seed as version 2, changing nothing else, and then for 6000 steps more.
+
+Error after 199 snapshots on the validation flows, at twelve consecutive checks of the last stage:
+
+| | |
+| --- | --- |
+| Version 2 | 97, 130, 113, 74, 51, 83, 119, 58, 117, 93, 70, 31 % |
+| Averaged | 65, 57, 50, 43, 42, 43, 43, 43, 39, 40, 38, 38 % |
+
+On the test simulations:
+
+| | Version 2 | Averaged | Averaged, 6000 steps more |
+| --- | --- | --- | --- |
+| Error with the timing taken out, after 599 snapshots: unseen cylinders | 11 % | 9 % | 8 % |
+| … higher Reynolds | 28 % | 15 % | 21 % |
+| … square obstacle | 28 % | 19 % | 20 % |
+| Error at the same instant, after 199 snapshots: unseen cylinders | 14 % | 34 % | 42 % |
+| … higher Reynolds | 44 % | 21 % | 79 % |
+| … square obstacle | 62 % | 66 % | 73 % |
+| Largest error in the shedding rhythm, Reynolds 60 to 260 | 3.9 % | 1.5 % | 3.0 % |
+| Flows of the sweep where the wake survives 2000 snapshots | 10 of 10 | 10 of 10 | 10 of 10 |
+
+What this shows:
+
+- **Averaging does what it is meant to.** Training becomes steady, and the flows the network produces
+  are closer to real ones in every kind of test (the first three rows).
+- **It does not make the network keep time better.** At the same instant the averaged network is
+  further from the simulation on cylinders like those it was trained on, and training it for longer
+  made that worse, not better.
+- **The error at the same instant is a poor guide over long runs.** During the extra 6000 steps it
+  improved on the validation flows, from 38 % to 30 %, while it got worse on the tests. It hinges on
+  matching the shedding rhythm to a fraction of a percent, which varies from one network to the next
+  and from one flow to another almost at random. Picking the best network by it on four validation
+  flows is therefore partly picking by luck.
+- **The 14 % of version 2 is probably flattered by that luck.** It was the best of twelve widely
+  scattered checks. With one training run of each network this cannot be settled; it needs several
+  random seeds.
+
+Version 2 remains the published network. The averaged one is not clearly better or worse; it is
+better at what can be measured reliably and worse at what cannot.
+
 ## Build
 
 Requirements: Python 3.10 or newer and an NVIDIA GPU with CUDA and 12 GB of memory.
@@ -220,9 +267,10 @@ stopped and started again.
   50 snapshots, as the comparison with version 1 shows.
 - **Its wake is slightly too strong**, by about 3 %, and at Reynolds 60, the edge of its training range,
   its shedding rhythm is off by 3.9 %.
-- **Its training is unsteady.** In the last stages the quality of the network swings widely from one
-  check to the next, which is why the best one has to be picked on validation flows. A different
-  random seed could give a noticeably different network; this has not been measured.
+- **Its training is unsteady, and part of its headline accuracy may be luck.** In the last stages the
+  quality of the network swings widely from one check to the next, and the best one is picked on four
+  validation flows. The experiment above suggests that this choice is partly chance. How much the
+  result changes with the random seed has not been measured.
 - **It only knows this kind of flow.** One obstacle, two dimensions, Reynolds numbers of a few hundred,
   where the wake is regular. Turbulence, three dimensions or several obstacles are untested.
 - **It learned from one simulator.** Its errors include those of the simulator, among them the effect
@@ -234,8 +282,11 @@ stopped and started again.
   evaluation on unseen obstacles and Reynolds numbers.
 - [x] **Version 2.** Longer simulations, training on long unattended runs, a validation set, an error
   measure that separates being out of step from being wrong. The wake no longer dies out.
-- [ ] **Next.** Several random seeds to measure how much the result depends on chance; obstacles of
-  several shapes in training; a steadier last training stage.
+- [x] **Experiment: averaging the network.** Steadier training and more faithful flows, no gain in
+  keeping time with the simulation.
+- [ ] **Next.** Several random seeds, to measure how much of the result is chance; choosing the final
+  network by the error with the timing taken out; a network that conserves mass by construction;
+  obstacles of several shapes in training.
 
 ## Layout
 

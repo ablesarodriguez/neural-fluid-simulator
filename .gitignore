@@ -18,3 +18,6 @@ preview/
 share/
 results_v1_on_v2_tests/
 results_v2_before_refine/
+results_v2/
+results_average/
+results_average_longer/

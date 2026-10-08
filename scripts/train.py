@@ -20,11 +20,21 @@ constant learning rate. The quality of the network swings from one check to
 the next at this point, so instead of keeping whatever it is at the end, it is
 measured every 250 steps on a few validation flows and the best one is kept.
 
-Run from the project folder:  python scripts/train.py [--from-stage N]
+With --average, a second copy of the network is kept that is never trained:
+after every step each of its numbers moves a little towards the trained
+network, so that it is a running average of the last thousand steps or so.
+Each training step corrects the network from a handful of examples and knocks
+it about a bit; the average smooths that out, and it is then the average that
+is measured, saved and used afterwards. This is an experiment, off by default:
+see the README for what it gained and what it did not.
+
+Run from the project folder:  python scripts/train.py [--average] [--from-stage N] [--steps M]
 The result is saved in runs/model.pt. With --from-stage N the first N - 1
-stages are skipped and training continues from the saved network.
+stages are skipped and training continues from the saved network. With
+--steps M the last stage lasts M steps instead of 3000.
 """
 
+import copy
 import math
 import sys
 import time
@@ -42,6 +52,7 @@ from flowsim.model import FlowNet, rollout
 STAGES = [(1, 16, 2500, "fresh"), (4, 8, 3000, "fresh"), (8, 4, 2500, "fresh"), (4, 8, 6000, "running"), (4, 8, 3000, "refine")]
 LEARNING_RATE = 3e-4
 NOISE = 0.01          # the inputs are blurred with a little noise, so that the network learns to recover from its own errors
+AVERAGING = 0.999     # how much of the averaged network is kept at each step; it then spans about the last 1000 steps
 LONGEST_ALONE = 1000  # in the last stage, snapshots a prediction is kept running before it is replaced by a fresh one
 
 
@@ -104,6 +115,10 @@ if __name__ == "__main__":
     if first_stage > 1:
         model.load_state_dict(torch.load(ROOT / "runs" / "model.pt"))
         done = sum(stage[2] for stage in STAGES[: first_stage - 1])
+    averaging = "--average" in sys.argv
+    # The averaged network: never trained, only moved towards the trained one. Without
+    # --average it is simply the trained network itself.
+    average = copy.deepcopy(model) if averaging else model
 
     def fresh(batch, horizon):
         """Random moments of random simulations, with a little noise."""
@@ -112,6 +127,10 @@ if __name__ == "__main__":
         state = velocity[which, when].float()
         return which, when, state + NOISE * torch.randn_like(state)
 
+    if "--steps" in sys.argv:
+        # A different length for the last stage, to keep refining a network that is still improving.
+        STAGES[-1] = (*STAGES[-1][:2], int(sys.argv[sys.argv.index("--steps") + 1]), STAGES[-1][3])
+
     best = float("inf")
     for horizon, batch, steps, kind in STAGES[first_stage - 1 :]:
         if kind != "fresh":
@@ -119,7 +138,7 @@ if __name__ == "__main__":
             alone = torch.zeros(batch, dtype=torch.long, device=device)  # snapshots each prediction has been running
         if kind == "refine":
             # The network as it enters the refinement is the one to beat.
-            short, medium, long, alive = check(model, validation)
+            short, medium, long, alive = check(average, validation)
             best = (short + medium + long) / 3 if alive == len(validation) else float("inf")
             print(f"before refining: {100 * short:.1f} % after 10 snapshots, {100 * medium:.1f} % after 100, {100 * long:.1f} % after 199;  "
                   f"wake alive after 1500: {alive} of {len(validation)}", flush=True)
@@ -156,23 +175,29 @@ if __name__ == "__main__":
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimiser.step()
+            # Early on the average follows the network closely, so that it is not held back by the random start.
+            keep = min(AVERAGING, (1 + done) / (10 + done))
+            if averaging:
+                with torch.no_grad():
+                    for averaged, trained in zip(average.parameters(), model.parameters()):
+                        averaged.lerp_(trained, 1.0 - keep)
             done += 1
             if kind != "fresh":
                 current = current.detach().float()  # the next step continues from here
                 alone += horizon
 
             if done % (250 if kind == "refine" else 500) == 0:
-                short, medium, long, alive = check(model, validation)
+                short, medium, long, alive = check(average, validation)
                 (ROOT / "runs").mkdir(exist_ok=True)
-                torch.save(model.state_dict(), ROOT / "runs" / "last.pt")
+                torch.save(average.state_dict(), ROOT / "runs" / "last.pt")
                 kept = ""
                 if kind != "refine":
-                    torch.save(model.state_dict(), ROOT / "runs" / "model.pt")
+                    torch.save(average.state_dict(), ROOT / "runs" / "model.pt")
                 elif alive == len(validation) and (short + medium + long) / 3 < best:
                     # During the refinement only the best network so far is kept: the one with the
                     # lowest error among those that keep the wake alive in every validation flow.
                     best = (short + medium + long) / 3
-                    torch.save(model.state_dict(), ROOT / "runs" / "model.pt")
+                    torch.save(average.state_dict(), ROOT / "runs" / "model.pt")
                     kept = "  <- best so far, kept"
                 print(f"step {done:5d}  {kind}, {horizon} ahead  loss {loss.item():.2e}  "
                       f"error on validation flows: {100 * short:.1f} % after 10 snapshots, {100 * medium:.1f} % after 100, {100 * long:.1f} % after 199;  "
